@@ -75,9 +75,8 @@ urlpatterns = [
     path('api/bazaar/upgrade-persistent-portfolio-limit/', upgrade_persistent_portfolio_limit, name='upgrade_persistent_portfolio_limit'),
 ]
 
-# Serve Vue frontend assets in production
+# Serve Vue frontend in production (WhiteNoise serves /assets/ via WHITENOISE_ROOT)
 if not settings.DEBUG:
-    urlpatterns += static('/assets/', document_root=settings.FRONTEND_DIR / 'assets')
     # Catch-all: serve index.html for any non-API route (Vue Router handles client-side routing)
     urlpatterns += [path('', TemplateView.as_view(template_name='index.html')),]
     urlpatterns += [path('<path:path>', TemplateView.as_view(template_name='index.html')),]

@@ -26,6 +26,9 @@ STATIC_URL = '/static/'
 STATICFILES_DIRS = []
 if FRONTEND_DIR.exists():
     STATICFILES_DIRS.append(str(FRONTEND_DIR / 'assets'))
+
+# Serve frontend dist files (assets/, favicon.ico, etc.) at the root URL
+WHITENOISE_ROOT = str(FRONTEND_DIR) if FRONTEND_DIR.exists() else None
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
