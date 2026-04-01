@@ -33,7 +33,7 @@ if FRONTEND_DIR.exists():
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-tso&-b+ohw&5w%nj_l)*b5$r5m*fhk_35*0o6&f5b*1b0f&ht5')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get('DEBUG', 'True').lower() in ('true', '1', 'yes')
+DEBUG = os.environ.get('DEBUG', 'False').lower() in ('true', '1', 'yes')
 
 # FMP API key for stock data
 FMP_API_KEY = os.environ.get('FMP_API_KEY', 'v8sOqRCN2IdYr8Ixx3PR6PKzaBpJNGJ8')
