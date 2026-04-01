@@ -28,6 +28,9 @@ from bazaar.views import (
 )
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.views.generic import TemplateView
+from django.conf import settings
+from django.conf.urls.static import static
 
 router = DefaultRouter()
 router.register(r'leagues', LeagueViewSet, basename='league')
@@ -71,3 +74,10 @@ urlpatterns = [
     path('api/update-spent/', update_spent, name='update_spent'),
     path('api/bazaar/upgrade-persistent-portfolio-limit/', upgrade_persistent_portfolio_limit, name='upgrade_persistent_portfolio_limit'),
 ]
+
+# Serve Vue frontend assets in production
+if not settings.DEBUG:
+    urlpatterns += static('/assets/', document_root=settings.FRONTEND_DIR / 'assets')
+    # Catch-all: serve index.html for any non-API route (Vue Router handles client-side routing)
+    urlpatterns += [path('', TemplateView.as_view(template_name='index.html')),]
+    urlpatterns += [path('<path:path>', TemplateView.as_view(template_name='index.html')),]
