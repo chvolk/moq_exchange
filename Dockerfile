@@ -1,6 +1,5 @@
 FROM python:3.12-slim
 
-# Install Node.js
 RUN apt-get update && apt-get install -y curl && \
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
@@ -8,27 +7,20 @@ RUN apt-get update && apt-get install -y curl && \
 
 WORKDIR /app
 
-# Install backend deps
 COPY backend/requirements.txt backend/requirements.txt
 RUN pip install --no-cache-dir -r backend/requirements.txt
 
-# Install frontend deps and build
 COPY frontend/package.json frontend/package-lock.json frontend/
 RUN cd frontend && npm ci
 
 COPY frontend/ frontend/
 RUN cd frontend && npm run build
 
-# Copy backend
 COPY backend/ backend/
 
-# collectstatic with dummy DB at build time
 RUN cd backend && DATABASE_URL=sqlite:///tmp/dummy.db python manage.py collectstatic --no-input
 
-WORKDIR /app/backend
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
 
-# Cache bust
-RUN echo "build: 2"
-
-ENTRYPOINT ["sh", "-c"]
-CMD ["echo 'Starting moq_exchange...' && echo \"PORT=$PORT\" && echo \"DATABASE_URL set=$([ -n \"$DATABASE_URL\" ] && echo yes || echo NO)\" && python manage.py migrate --no-input 2>&1 && echo 'Migrations done, starting gunicorn...' && exec gunicorn fantasy_stocks.wsgi --bind 0.0.0.0:${PORT:-8000} --timeout 120 --access-logfile -"]
+CMD ["/app/start.sh"]
