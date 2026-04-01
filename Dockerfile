@@ -17,17 +17,14 @@ COPY frontend/package.json frontend/package-lock.json frontend/
 RUN cd frontend && npm ci
 
 COPY frontend/ frontend/
-
 RUN cd frontend && npm run build
 
 # Copy backend
 COPY backend/ backend/
 
-# collectstatic needs a dummy DATABASE_URL at build time since Django loads settings
+# collectstatic with dummy DB at build time
 RUN cd backend && DATABASE_URL=sqlite:///tmp/dummy.db python manage.py collectstatic --no-input
 
 WORKDIR /app/backend
 
-EXPOSE ${PORT:-8000}
-
-CMD sh -c "python manage.py migrate --no-input && gunicorn fantasy_stocks.wsgi --bind 0.0.0.0:\${PORT:-8000}"
+CMD sh -c "echo 'Starting moq_exchange...' && echo 'PORT='$PORT && echo 'DATABASE_URL set='$([ -n \"$DATABASE_URL\" ] && echo 'yes' || echo 'NO') && python manage.py migrate --no-input 2>&1 && echo 'Migrations done, starting gunicorn...' && exec gunicorn fantasy_stocks.wsgi --bind 0.0.0.0:$PORT --timeout 120"
