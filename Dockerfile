@@ -27,4 +27,8 @@ RUN cd backend && DATABASE_URL=sqlite:///tmp/dummy.db python manage.py collectst
 
 WORKDIR /app/backend
 
-CMD sh -c "echo 'Starting moq_exchange...' && echo 'PORT='$PORT && echo 'DATABASE_URL set='$([ -n \"$DATABASE_URL\" ] && echo 'yes' || echo 'NO') && python manage.py migrate --no-input 2>&1 && echo 'Migrations done, starting gunicorn...' && exec gunicorn fantasy_stocks.wsgi --bind 0.0.0.0:$PORT --timeout 120"
+# Cache bust
+RUN echo "build: 2"
+
+ENTRYPOINT ["sh", "-c"]
+CMD ["echo 'Starting moq_exchange...' && echo \"PORT=$PORT\" && echo \"DATABASE_URL set=$([ -n \"$DATABASE_URL\" ] && echo yes || echo NO)\" && python manage.py migrate --no-input 2>&1 && echo 'Migrations done, starting gunicorn...' && exec gunicorn fantasy_stocks.wsgi --bind 0.0.0.0:${PORT:-8000} --timeout 120 --access-logfile -"]
