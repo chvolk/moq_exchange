@@ -1,19 +1,21 @@
 #!/bin/bash
 set -e
 
-echo "=== Deploy starting ==="
-echo "PATH: $PATH"
-echo "PORT: $PORT"
-echo "PWD: $(pwd)"
-
 export PATH=/opt/venv/bin:$PATH
-
-echo "Python: $(which python)"
-echo "Gunicorn: $(which gunicorn)"
-
 cd backend
 
-echo "=== Running migrations ==="
+# If SERVICE_MODE=cron, run the stock update and exit
+if [ "$SERVICE_MODE" = "cron" ]; then
+  echo "=== $(date) - Running fmp_populate_stocks ==="
+  python manage.py fmp_populate_stocks
+  echo "=== $(date) - Done ==="
+  exit 0
+fi
+
+# Otherwise, run the web server
+echo "=== Deploy starting ==="
+echo "PORT: $PORT"
+
 python manage.py migrate --noinput
 
 echo "=== Starting gunicorn on port ${PORT:-8000} ==="
