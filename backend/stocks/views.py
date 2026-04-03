@@ -151,18 +151,21 @@ class LeaderboardView(APIView):
 
     def get(self, request):
         # Use pre-calculated values from update_leaderboard command
-        leaderboard = (
+        leaderboard = list(
             Portfolio.objects.filter(portfoliostock__isnull=False)
             .distinct()
             .select_related('user')
             .order_by('-total_gain_loss')
-            .values(
-                username=F('user__username'),
-                total_value=F('total_value'),
-                gain_loss=F('total_gain_loss'),
-            )
         )
-        return Response(list(leaderboard))
+        data = [
+            {
+                'username': p.user.username,
+                'total_value': p.total_value,
+                'gain_loss': p.total_gain_loss,
+            }
+            for p in leaderboard
+        ]
+        return Response(data)
 
 class SellStockView(APIView):
     permission_classes = [IsAuthenticated]
