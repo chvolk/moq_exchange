@@ -12,8 +12,6 @@ from django.conf import settings as django_settings
 
 FMP_BASE_URL = "https://financialmodelingprep.com/stable"
 LOCK_FILE = os.path.join(tempfile.gettempdir(), "fmp_update_prices.lock")
-# Hard ceiling: never exceed this many API calls in a single run
-MAX_CALLS_PER_RUN = 1400
 
 
 class Command(BaseCommand):
@@ -29,14 +27,14 @@ class Command(BaseCommand):
             help="Delay between API calls in seconds",
         )
         parser.add_argument(
-            "--chunk-size", type=int, default=MAX_CALLS_PER_RUN,
-            help=f"Number of stocks to update per run (default {MAX_CALLS_PER_RUN})",
+            "--chunk-size", type=int, default=0,
+            help="Number of stocks to update per run (0 = all)",
         )
 
     def handle(self, *args, **options):
         api_key = options["apikey"] or django_settings.FMP_API_KEY
         delay = options["delay"]
-        chunk_size = min(options["chunk_size"], MAX_CALLS_PER_RUN)
+        chunk_size = options["chunk_size"]
 
         # ── Lock: prevent overlapping runs ──
         if os.path.exists(LOCK_FILE):
@@ -74,11 +72,11 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("No stocks in DB to update."))
             return
 
-        # Pick the oldest-updated stocks first — this naturally cycles through all stocks
-        chunk = list(
-            Stock.objects.order_by("last_updated")
-            .values_list("symbol", flat=True)[:chunk_size]
-        )
+        # Pick the oldest-updated stocks first
+        qs = Stock.objects.order_by("last_updated").values_list("symbol", flat=True)
+        if chunk_size > 0:
+            qs = qs[:chunk_size]
+        chunk = list(qs)
 
         est_minutes = len(chunk) * delay / 60
         self.stdout.write(
