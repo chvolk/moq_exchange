@@ -167,11 +167,11 @@ class LeaderboardView(APIView):
             )
         ).values('username', 'total_value', 'gain_loss').order_by('-gain_loss')
 
-        # Filter out users with total_value not equal to 50000.00
+        # Filter out users who haven't drafted any stocks
         try:
-            users = users.exclude(total_value=50000.00)
+            users = users.filter(portfolio__portfoliostock__isnull=False).distinct()
         except Exception as e:
-            print(f"Well, butter my biscuit! Error filtering users: {str(e)}")
+            print(f"Error filtering users: {str(e)}")
 
         return Response(list(users))
 
