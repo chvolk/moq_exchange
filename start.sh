@@ -4,10 +4,10 @@ set -e
 export PATH=/opt/venv/bin:$PATH
 cd backend
 
-# If SERVICE_MODE=cron, run the stock update and exit
+# If SERVICE_MODE=cron, run the price update chunk and exit
 if [ "$SERVICE_MODE" = "cron" ]; then
-  echo "=== $(date) - Running fmp_populate_stocks ==="
-  python manage.py fmp_populate_stocks
+  echo "=== $(date) - Running fmp_update_prices ==="
+  python manage.py fmp_update_prices
   echo "=== $(date) - Done ==="
   exit 0
 fi

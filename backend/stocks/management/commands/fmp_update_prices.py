@@ -1,51 +1,95 @@
+import os
+import sys
+import tempfile
 import requests
 import time
 from django.core.management.base import BaseCommand
 from django.db import transaction
+from django.utils import timezone
 from stocks.models import Stock
 from bazaar.models import BazaarListing
-
 from django.conf import settings as django_settings
 
 FMP_BASE_URL = "https://financialmodelingprep.com/stable"
+LOCK_FILE = os.path.join(tempfile.gettempdir(), "fmp_update_prices.lock")
+# Hard ceiling: never exceed this many API calls in a single run
+MAX_CALLS_PER_RUN = 1400
 
 
 class Command(BaseCommand):
-    help = "Update stock prices from FMP API (quote endpoint)"
+    help = "Update stock prices from FMP API. Processes a chunk each run, cycling through all stocks."
 
     def add_arguments(self, parser):
         parser.add_argument(
-            "--apikey",
-            type=str,
-            default=None,
+            "--apikey", type=str, default=None,
             help="FMP API key (defaults to FMP_API_KEY setting)",
         )
         parser.add_argument(
-            "--delay",
-            type=float,
-            default=0.3,
+            "--delay", type=float, default=0.5,
             help="Delay between API calls in seconds",
+        )
+        parser.add_argument(
+            "--chunk-size", type=int, default=MAX_CALLS_PER_RUN,
+            help=f"Number of stocks to update per run (default {MAX_CALLS_PER_RUN})",
         )
 
     def handle(self, *args, **options):
         api_key = options["apikey"] or django_settings.FMP_API_KEY
         delay = options["delay"]
+        chunk_size = min(options["chunk_size"], MAX_CALLS_PER_RUN)
 
-        # Get all symbols we need to update
-        stock_symbols = set(Stock.objects.values_list("symbol", flat=True))
+        # ── Lock: prevent overlapping runs ──
+        if os.path.exists(LOCK_FILE):
+            try:
+                with open(LOCK_FILE) as f:
+                    lock_pid = int(f.read().strip())
+                # Check if the process is still running (Unix-only; on Railway this is Linux)
+                os.kill(lock_pid, 0)
+                self.stdout.write(self.style.WARNING(
+                    f"Another run is still active (PID {lock_pid}). Skipping."
+                ))
+                return
+            except (OSError, ValueError):
+                # Process is gone or lock file is corrupt — stale lock, remove it
+                os.remove(LOCK_FILE)
+
+        # Write our PID to the lock file
+        with open(LOCK_FILE, "w") as f:
+            f.write(str(os.getpid()))
+
+        try:
+            self._run(api_key, delay, chunk_size)
+        finally:
+            # Always clean up the lock
+            try:
+                os.remove(LOCK_FILE)
+            except OSError:
+                pass
+
+    def _run(self, api_key, delay, chunk_size):
         bazaar_symbols = set(BazaarListing.objects.values_list("symbol", flat=True))
-        all_symbols = list(stock_symbols.union(bazaar_symbols))
+        total = Stock.objects.count()
 
-        if not all_symbols:
+        if total == 0:
             self.stdout.write(self.style.WARNING("No stocks in DB to update."))
             return
 
-        self.stdout.write(f"Updating prices for {len(all_symbols)} symbols...")
+        # Pick the oldest-updated stocks first — this naturally cycles through all stocks
+        chunk = list(
+            Stock.objects.order_by("last_updated")
+            .values_list("symbol", flat=True)[:chunk_size]
+        )
+
+        est_minutes = len(chunk) * delay / 60
+        self.stdout.write(
+            f"Updating {len(chunk)} of {total} stocks "
+            f"(~{est_minutes:.0f} min at {delay}s delay)..."
+        )
 
         updated_count = 0
         failed_count = 0
 
-        for i, symbol in enumerate(all_symbols):
+        for i, symbol in enumerate(chunk):
             try:
                 resp = requests.get(
                     f"{FMP_BASE_URL}/quote",
@@ -53,18 +97,18 @@ class Command(BaseCommand):
                     timeout=10,
                 )
 
-                if resp.status_code != 200:
-                    self.stdout.write(self.style.WARNING(
-                        f"[{i+1}/{len(all_symbols)}] HTTP {resp.status_code} for {symbol}"
+                if resp.status_code == 429:
+                    self.stdout.write(self.style.ERROR(
+                        f"  Rate limited at call {i+1}! Stopping early."
                     ))
+                    break
+
+                if resp.status_code != 200:
                     failed_count += 1
                     continue
 
                 data = resp.json()
                 if not data or not isinstance(data, list) or len(data) == 0:
-                    self.stdout.write(self.style.WARNING(
-                        f"[{i+1}/{len(all_symbols)}] No data for {symbol}"
-                    ))
                     failed_count += 1
                     continue
 
@@ -76,22 +120,28 @@ class Command(BaseCommand):
                     continue
 
                 with transaction.atomic():
-                    Stock.objects.filter(symbol=symbol).update(current_price=price)
-                    BazaarListing.objects.filter(symbol=symbol).update(price=price)
+                    Stock.objects.filter(symbol=symbol).update(
+                        current_price=price,
+                        last_updated=timezone.now()
+                    )
+                    if symbol in bazaar_symbols:
+                        BazaarListing.objects.filter(symbol=symbol).update(price=price)
 
                 updated_count += 1
 
-                if (i + 1) % 50 == 0:
-                    self.stdout.write(f"  Progress: {i+1}/{len(all_symbols)}")
+                if (i + 1) % 200 == 0:
+                    self.stdout.write(f"  Progress: {i+1}/{len(chunk)}")
 
             except Exception as e:
                 failed_count += 1
-                self.stdout.write(self.style.WARNING(
-                    f"[{i+1}/{len(all_symbols)}] Error for {symbol}: {e}"
-                ))
+                if (i + 1) % 200 == 0:
+                    self.stdout.write(self.style.WARNING(
+                        f"  Error for {symbol}: {e}"
+                    ))
 
             time.sleep(delay)
 
         self.stdout.write(self.style.SUCCESS(
-            f"\nDone! Updated: {updated_count}, Failed: {failed_count}"
+            f"\nDone! Updated: {updated_count}, Failed: {failed_count} "
+            f"(chunk {len(chunk)}/{total})"
         ))
