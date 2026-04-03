@@ -150,30 +150,19 @@ class LeaderboardView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        users = User.objects.annotate(
-            portfolio_value=Coalesce(Sum(
-                ExpressionWrapper(
-                    F('portfolio__portfoliostock__quantity') * F('portfolio__portfoliostock__stock__current_price'),
-                    output_field=DecimalField(max_digits=10, decimal_places=2)
-                )
-            ), 0),
-            total_value=ExpressionWrapper(
-                F('portfolio_value') + F('portfolio__balance'),
-                output_field=DecimalField(max_digits=10, decimal_places=2)
-            ),
-            gain_loss=ExpressionWrapper(
-                F('total_value') - F('portfolio__initial_investment'),
-                output_field=DecimalField(max_digits=10, decimal_places=2)
+        # Use pre-calculated values from update_leaderboard command
+        leaderboard = (
+            Portfolio.objects.filter(portfoliostock__isnull=False)
+            .distinct()
+            .select_related('user')
+            .order_by('-total_gain_loss')
+            .values(
+                username=F('user__username'),
+                total_value=F('total_value'),
+                gain_loss=F('total_gain_loss'),
             )
-        ).values('username', 'total_value', 'gain_loss').order_by('-gain_loss')
-
-        # Filter out users who haven't drafted any stocks
-        try:
-            users = users.filter(portfolio__portfoliostock__isnull=False).distinct()
-        except Exception as e:
-            print(f"Error filtering users: {str(e)}")
-
-        return Response(list(users))
+        )
+        return Response(list(leaderboard))
 
 class SellStockView(APIView):
     permission_classes = [IsAuthenticated]
