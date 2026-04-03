@@ -63,7 +63,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--delay",
             type=float,
-            default=0.3,
+            default=0.5,
             help="Delay between API calls in seconds",
         )
 
