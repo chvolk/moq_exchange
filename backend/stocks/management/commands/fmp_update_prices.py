@@ -65,6 +65,9 @@ class Command(BaseCommand):
                 pass
 
     def _run(self, api_key, delay, chunk_size):
+        from stocks.models import PortfolioStock
+        from bazaar.models import PersistentPortfolioStock
+
         bazaar_symbols = set(BazaarListing.objects.values_list("symbol", flat=True))
         total = Stock.objects.count()
 
@@ -72,11 +75,27 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("No stocks in DB to update."))
             return
 
-        # Pick the oldest-updated stocks first
-        qs = Stock.objects.order_by("last_updated").values_list("symbol", flat=True)
+        # Priority: stocks held in weekly or persistent portfolios come first
+        weekly_symbols = set(
+            PortfolioStock.objects.values_list("stock__symbol", flat=True)
+        )
+        persistent_symbols = set(
+            PersistentPortfolioStock.objects.values_list("stock__symbol", flat=True)
+        )
+        priority_symbols = list(weekly_symbols | persistent_symbols | bazaar_symbols)
+
+        # Then the rest, oldest-updated first
+        remaining = list(
+            Stock.objects.exclude(symbol__in=priority_symbols)
+            .order_by("last_updated")
+            .values_list("symbol", flat=True)
+        )
+
+        chunk = priority_symbols + remaining
         if chunk_size > 0:
-            qs = qs[:chunk_size]
-        chunk = list(qs)
+            chunk = chunk[:chunk_size]
+
+        self.stdout.write(f"  {len(priority_symbols)} priority (portfolio/bazaar), {len(remaining)} remaining")
 
         est_minutes = len(chunk) * delay / 60
         self.stdout.write(
