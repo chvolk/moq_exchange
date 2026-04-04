@@ -18,13 +18,12 @@ if [ "$SERVICE_MODE" = "cron" ]; then
     python manage.py seed_bots --reset
   fi
 
-  # Every 2 hours (even hours): full price update
-  if [ $((10#$HOUR % 2)) -eq 0 ] && [ "$MINUTE" -lt "15" ]; then
-    echo "--- Price update (full pass) ---"
-    python manage.py fmp_update_prices --delay 0.25
-  fi
+  # Every tick: attempt price update (command self-skips via DB cooldown if
+  # a previous run finished recently — safe across separate containers)
+  echo "--- Price update ---"
+  python manage.py fmp_update_prices --delay 0.25
 
-  # Every tick: leaderboard update
+  # Every tick: leaderboard update (runs after prices, fast)
   echo "--- Leaderboard update ---"
   python manage.py update_leaderboard
 

@@ -1,8 +1,6 @@
-import os
-import sys
-import tempfile
 import requests
 import time
+from datetime import timedelta
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
@@ -11,11 +9,13 @@ from bazaar.models import BazaarListing
 from django.conf import settings as django_settings
 
 FMP_BASE_URL = "https://financialmodelingprep.com/stable"
-LOCK_FILE = os.path.join(tempfile.gettempdir(), "fmp_update_prices.lock")
+# If the newest priority stock was updated less than this many minutes ago,
+# a full pass is already in progress (or just finished) — skip.
+COOLDOWN_MINUTES = 90
 
 
 class Command(BaseCommand):
-    help = "Update stock prices from FMP API. Processes a chunk each run, cycling through all stocks."
+    help = "Update stock prices from FMP API. Processes all stocks, priority first."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -27,55 +27,38 @@ class Command(BaseCommand):
             help="Delay between API calls in seconds",
         )
         parser.add_argument(
-            "--chunk-size", type=int, default=0,
-            help="Number of stocks to update per run (0 = all)",
+            "--force", action="store_true",
+            help="Ignore cooldown and run anyway",
         )
 
     def handle(self, *args, **options):
         api_key = options["apikey"] or django_settings.FMP_API_KEY
         delay = options["delay"]
-        chunk_size = options["chunk_size"]
 
-        # ── Lock: prevent overlapping runs ──
-        if os.path.exists(LOCK_FILE):
-            try:
-                with open(LOCK_FILE) as f:
-                    lock_pid = int(f.read().strip())
-                # Check if the process is still running (Unix-only; on Railway this is Linux)
-                os.kill(lock_pid, 0)
-                self.stdout.write(self.style.WARNING(
-                    f"Another run is still active (PID {lock_pid}). Skipping."
-                ))
-                return
-            except (OSError, ValueError):
-                # Process is gone or lock file is corrupt — stale lock, remove it
-                os.remove(LOCK_FILE)
-
-        # Write our PID to the lock file
-        with open(LOCK_FILE, "w") as f:
-            f.write(str(os.getpid()))
-
-        try:
-            self._run(api_key, delay, chunk_size)
-        finally:
-            # Always clean up the lock
-            try:
-                os.remove(LOCK_FILE)
-            except OSError:
-                pass
-
-    def _run(self, api_key, delay, chunk_size):
         from stocks.models import PortfolioStock
         from bazaar.models import PersistentPortfolioStock
 
-        bazaar_symbols = set(BazaarListing.objects.values_list("symbol", flat=True))
         total = Stock.objects.count()
-
         if total == 0:
             self.stdout.write(self.style.WARNING("No stocks in DB to update."))
             return
 
-        # Priority: stocks held in weekly or persistent portfolios come first
+        # Check cooldown: if the oldest stock was updated recently, another run
+        # is in progress or just finished — skip to avoid overlap
+        if not options["force"]:
+            oldest = Stock.objects.order_by("last_updated").first()
+            if oldest and oldest.last_updated:
+                age = timezone.now() - oldest.last_updated
+                if age < timedelta(minutes=COOLDOWN_MINUTES):
+                    self.stdout.write(self.style.WARNING(
+                        f"Last full pass completed {age.seconds // 60}m ago "
+                        f"(cooldown {COOLDOWN_MINUTES}m). Skipping. Use --force to override."
+                    ))
+                    return
+
+        bazaar_symbols = set(BazaarListing.objects.values_list("symbol", flat=True))
+
+        # Priority: stocks in weekly/persistent portfolios or bazaar listings
         weekly_symbols = set(
             PortfolioStock.objects.values_list("stock__symbol", flat=True)
         )
@@ -91,22 +74,23 @@ class Command(BaseCommand):
             .values_list("symbol", flat=True)
         )
 
-        chunk = priority_symbols + remaining
-        if chunk_size > 0:
-            chunk = chunk[:chunk_size]
+        all_symbols = priority_symbols + remaining
 
-        self.stdout.write(f"  {len(priority_symbols)} priority (portfolio/bazaar), {len(remaining)} remaining")
-
-        est_minutes = len(chunk) * delay / 60
         self.stdout.write(
-            f"Updating {len(chunk)} of {total} stocks "
+            f"  {len(priority_symbols)} priority (portfolio/bazaar), "
+            f"{len(remaining)} remaining"
+        )
+
+        est_minutes = len(all_symbols) * delay / 60
+        self.stdout.write(
+            f"Updating {len(all_symbols)} of {total} stocks "
             f"(~{est_minutes:.0f} min at {delay}s delay)..."
         )
 
         updated_count = 0
         failed_count = 0
 
-        for i, symbol in enumerate(chunk):
+        for i, symbol in enumerate(all_symbols):
             try:
                 resp = requests.get(
                     f"{FMP_BASE_URL}/quote",
@@ -147,7 +131,7 @@ class Command(BaseCommand):
                 updated_count += 1
 
                 if (i + 1) % 200 == 0:
-                    self.stdout.write(f"  Progress: {i+1}/{len(chunk)}")
+                    self.stdout.write(f"  Progress: {i+1}/{len(all_symbols)}")
 
             except Exception as e:
                 failed_count += 1
@@ -160,5 +144,5 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.SUCCESS(
             f"\nDone! Updated: {updated_count}, Failed: {failed_count} "
-            f"(chunk {len(chunk)}/{total})"
+            f"({len(all_symbols)} total)"
         ))
