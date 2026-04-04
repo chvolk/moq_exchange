@@ -1,6 +1,5 @@
 import requests
 import time
-from datetime import timedelta
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
@@ -9,13 +8,10 @@ from bazaar.models import BazaarListing
 from django.conf import settings as django_settings
 
 FMP_BASE_URL = "https://financialmodelingprep.com/stable"
-# If the newest priority stock was updated less than this many minutes ago,
-# a full pass is already in progress (or just finished) — skip.
-COOLDOWN_MINUTES = 90
 
 
 class Command(BaseCommand):
-    help = "Update stock prices from FMP API. Processes all stocks, priority first."
+    help = "Update stock prices from FMP API. Priority stocks first, then the rest."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -26,35 +22,18 @@ class Command(BaseCommand):
             "--delay", type=float, default=0.5,
             help="Delay between API calls in seconds",
         )
-        parser.add_argument(
-            "--force", action="store_true",
-            help="Ignore cooldown and run anyway",
-        )
 
     def handle(self, *args, **options):
-        api_key = options["apikey"] or django_settings.FMP_API_KEY
-        delay = options["delay"]
-
         from stocks.models import PortfolioStock
         from bazaar.models import PersistentPortfolioStock
+
+        api_key = options["apikey"] or django_settings.FMP_API_KEY
+        delay = options["delay"]
 
         total = Stock.objects.count()
         if total == 0:
             self.stdout.write(self.style.WARNING("No stocks in DB to update."))
             return
-
-        # Check cooldown: if the oldest stock was updated recently, another run
-        # is in progress or just finished — skip to avoid overlap
-        if not options["force"]:
-            oldest = Stock.objects.order_by("last_updated").first()
-            if oldest and oldest.last_updated:
-                age = timezone.now() - oldest.last_updated
-                if age < timedelta(minutes=COOLDOWN_MINUTES):
-                    self.stdout.write(self.style.WARNING(
-                        f"Last full pass completed {age.seconds // 60}m ago "
-                        f"(cooldown {COOLDOWN_MINUTES}m). Skipping. Use --force to override."
-                    ))
-                    return
 
         bazaar_symbols = set(BazaarListing.objects.values_list("symbol", flat=True))
 
@@ -67,7 +46,6 @@ class Command(BaseCommand):
         )
         priority_symbols = list(weekly_symbols | persistent_symbols | bazaar_symbols)
 
-        # Then the rest, oldest-updated first
         remaining = list(
             Stock.objects.exclude(symbol__in=priority_symbols)
             .order_by("last_updated")
@@ -77,14 +55,11 @@ class Command(BaseCommand):
         all_symbols = priority_symbols + remaining
 
         self.stdout.write(
-            f"  {len(priority_symbols)} priority (portfolio/bazaar), "
-            f"{len(remaining)} remaining"
+            f"  {len(priority_symbols)} priority, {len(remaining)} remaining"
         )
-
         est_minutes = len(all_symbols) * delay / 60
         self.stdout.write(
-            f"Updating {len(all_symbols)} of {total} stocks "
-            f"(~{est_minutes:.0f} min at {delay}s delay)..."
+            f"Updating {len(all_symbols)} stocks (~{est_minutes:.0f} min at {delay}s delay)..."
         )
 
         updated_count = 0
