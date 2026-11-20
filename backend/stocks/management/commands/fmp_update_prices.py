@@ -1,6 +1,6 @@
 import requests
 import time
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 from stocks.models import Stock
@@ -79,6 +79,12 @@ class Command(BaseCommand):
                     ))
                     break
 
+                if resp.status_code in (401, 403):
+                    # Bad/expired key or plan: every call will fail, so fail the run loudly
+                    raise CommandError(
+                        f"FMP rejected the API key (HTTP {resp.status_code}): {resp.text[:300]}"
+                    )
+
                 if resp.status_code != 200:
                     failed_count += 1
                     continue
@@ -108,6 +114,8 @@ class Command(BaseCommand):
                 if (i + 1) % 200 == 0:
                     self.stdout.write(f"  Progress: {i+1}/{len(all_symbols)}")
 
+            except CommandError:
+                raise
             except Exception as e:
                 failed_count += 1
                 if (i + 1) % 200 == 0:
@@ -116,6 +124,11 @@ class Command(BaseCommand):
                     ))
 
             time.sleep(delay)
+
+        if updated_count == 0:
+            raise CommandError(
+                f"No prices updated ({failed_count} failed of {len(all_symbols)})"
+            )
 
         self.stdout.write(self.style.SUCCESS(
             f"\nDone! Updated: {updated_count}, Failed: {failed_count} "

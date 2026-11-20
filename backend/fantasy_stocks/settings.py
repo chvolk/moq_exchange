@@ -13,10 +13,14 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 from pathlib import Path
 import os
 
-
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Local development: load backend/.env if present. Real environment variables
+# (e.g. Railway service variables in prod) take precedence over the file.
+load_dotenv(BASE_DIR / '.env')
 # Frontend build output directory
 FRONTEND_DIR = BASE_DIR.parent / 'frontend' / 'dist'
 
@@ -39,7 +43,7 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-tso&-b+ohw&5w%nj_l)*b
 DEBUG = os.environ.get('DEBUG', 'False').lower() in ('true', '1', 'yes')
 
 # FMP API key for stock data
-FMP_API_KEY = os.environ.get('FMP_API_KEY', 'v8sOqRCN2IdYr8Ixx3PR6PKzaBpJNGJ8')
+FMP_API_KEY = os.environ.get('FMP_API_KEY', '')
 
 ALLOWED_HOSTS = ['*']
 
