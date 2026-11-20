@@ -6,6 +6,8 @@ cd backend
 
 case "$SERVICE_MODE" in
   prices)
+    echo "=== $(date -u) - Add any missing hot stocks ==="
+    python manage.py fmp_populate_stocks --hot --skip-existing --delay 0.25 || echo "Hot stock load failed, continuing"
     echo "=== $(date -u) - Price update (full pass) ==="
     python manage.py fmp_update_prices --delay 0.25
     echo "=== $(date -u) - Done ==="

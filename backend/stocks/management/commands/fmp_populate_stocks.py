@@ -9,6 +9,39 @@ FMP_BASE_URL = "https://financialmodelingprep.com/stable"
 SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 SEC_USER_AGENT = "MoqExchange admin@moq.exchange"
 
+# Curated "hot" symbols that should always be in the stock list, even if the
+# bulk SEC load ran before they listed. Loaded with --hot (the prices cron
+# service does this before every price update).
+HOT_SYMBOLS = [
+    # Recent listings (2025-2026)
+    "ANT",   # Anthropic
+    "SPCX",  # SpaceX
+    "CBRS",  # Cerebras
+    "SKHY",  # SK hynix
+    "CRWV",  # CoreWeave
+    "CRCL",  # Circle
+    "FIG",   # Figma
+    "KLAR",  # Klarna
+    "CHYM",  # Chime
+    "NTSK",  # Netskope
+    "NAVN",  # Navan
+    "FIGR",  # Figure
+    "SAIL",  # SailPoint
+    "MDLN",  # Medline
+    "HNGE",  # Hinge Health
+    "FLY",   # Firefly Aerospace
+    "VOYG",  # Voyager Technologies
+    "BLSH",  # Bullish
+    "GLXY",  # Galaxy Digital
+    "ETOR",  # eToro
+    "WLTH",  # Wealthfront
+    "STUB",  # StubHub
+    # Trending names
+    "PLTR", "ARM", "APP", "SNDK", "CEG", "CVNA", "HOOD", "VST", "MSTR",
+    "ALAB", "RKLB", "COIN", "NBIS", "CRDO", "RDDT", "SMCI", "IONQ", "ASTS",
+    "TEM", "IREN", "OKLO", "HIMS", "RGTI", "QBTS", "SOUN",
+]
+
 
 class Command(BaseCommand):
     help = "Populate stocks from SEC ticker list + FMP profile endpoint. Supports chunking with --offset/--limit."
@@ -31,6 +64,14 @@ class Command(BaseCommand):
             help="Max stocks to process this run (0 = all remaining)",
         )
         parser.add_argument(
+            "--symbols", type=str, default=None,
+            help="Comma-separated symbols to load instead of the full SEC list",
+        )
+        parser.add_argument(
+            "--hot", action="store_true",
+            help="Load the curated HOT_SYMBOLS list instead of the full SEC list",
+        )
+        parser.add_argument(
             "--skip-existing", action="store_true",
             help="Skip symbols already in the DB (faster for initial bulk load)",
         )
@@ -42,30 +83,40 @@ class Command(BaseCommand):
         limit = options["limit"]
         skip_existing = options["skip_existing"]
 
-        # Step 1: Fetch SEC ticker list (~10k US-registered companies)
-        self.stdout.write("Fetching ticker list from SEC...")
-        try:
-            resp = requests.get(
-                SEC_TICKERS_URL,
-                headers={"User-Agent": SEC_USER_AGENT},
-                timeout=15,
-            )
-            resp.raise_for_status()
-            sec_data = resp.json()
-        except Exception as e:
-            self.stdout.write(self.style.ERROR(f"Failed to fetch SEC tickers: {e}"))
-            return
+        if options["symbols"] or options["hot"]:
+            # Explicit symbols: skip the SEC list entirely
+            requested = list(HOT_SYMBOLS) if options["hot"] else []
+            if options["symbols"]:
+                requested += options["symbols"].split(",")
+            candidates = requested
+            source = "explicit list"
+        else:
+            # Step 1: Fetch SEC ticker list (~10k US-registered companies)
+            self.stdout.write("Fetching ticker list from SEC...")
+            try:
+                resp = requests.get(
+                    SEC_TICKERS_URL,
+                    headers={"User-Agent": SEC_USER_AGENT},
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                sec_data = resp.json()
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f"Failed to fetch SEC tickers: {e}"))
+                return
+            candidates = [entry.get("ticker", "") for entry in sec_data.values()]
+            source = "SEC"
 
         # Extract unique tickers, filtering to standard symbols (1-5 uppercase letters)
         all_tickers = []
         seen = set()
-        for entry in sec_data.values():
-            ticker = entry.get("ticker", "").strip().upper()
+        for candidate in candidates:
+            ticker = candidate.strip().upper()
             if ticker and ticker not in seen and re.match(r'^[A-Z]{1,5}$', ticker):
                 all_tickers.append(ticker)
                 seen.add(ticker)
 
-        self.stdout.write(f"Got {len(all_tickers)} valid tickers from SEC")
+        self.stdout.write(f"Got {len(all_tickers)} valid tickers from {source}")
 
         # Apply offset/limit for chunking
         chunk = all_tickers[offset:]
