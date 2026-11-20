@@ -42,6 +42,8 @@ BOTS = [
     ("TreeHugger", "Clean energy plays", ["NEE", "FSLR", "ENPH", "PLUG", "BE", "SEDG"]),
     # 17. Biotech gambler
     ("LabRat", "Biotech bets", ["MRNA", "REGN", "VRTX", "GILD", "AMGN", "ISRG"]),
+    # 18. AI labs and the companies powering them
+    ("SkyNet", "AI plays", ["ANT", "GOOGL", "MSFT", "META", "NVDA", "PLTR", "CRWV", "CBRS"]),
 ]
 
 STARTING_BALANCE = Decimal("50000.00")
