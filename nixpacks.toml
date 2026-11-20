@@ -1,0 +1,4 @@
+# Python app (auto-detected from requirements.txt) that also needs Node to
+# build the frontend. "..." keeps the Python provider's own packages.
+[phases.setup]
+nixPkgs = ["...", "nodejs_22"]
